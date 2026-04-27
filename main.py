@@ -1,4 +1,5 @@
 import os
+import sys
 import argparse
 from dotenv import load_dotenv
 from google import genai
@@ -19,31 +20,43 @@ def main():
     load_dotenv()
     api_key = os.environ.get("GEMINI_API_KEY")
     if api_key == None:
-        raise RunTimeError("no api key")
+        raise RuntimeError("no api key")
 
     client = genai.Client(api_key=api_key)
 
-    response = client.models.generate_content(model="gemini-2.5-flash", contents=messages, config=types.GenerateContentConfig(tools=[available_functions], system_instruction=system_prompt))
-    
-    if response.usage_metadata == None:
-        raise RunTimeError("API requst failure likely")
-    if args.verbose == True:
-        print(f"User prompt: {args.user_prompt}\nPrompt tokens: {response.usage_metadata.prompt_token_count}\nResponse tokens: {response.usage_metadata.candidates_token_count}")
-    if response.function_calls == None:
-        print(response.text)
+    for _ in range(20):
+        
+        response = client.models.generate_content(model="gemini-2.5-flash", contents=messages, config=types.GenerateContentConfig(tools=[available_functions], system_instruction=system_prompt))
+        
+        if response.usage_metadata == None:
+            raise RuntimeError("API requst failure likely")
+        if args.verbose == True:
+            print(f"User prompt: {args.user_prompt}\nPrompt tokens: {response.usage_metadata.prompt_token_count}\nResponse tokens: {response.usage_metadata.candidates_token_count}")
+        
+        if response.candidates:
+            for candidate in response.candidates:
+                messages.append(candidate.content)
+
+        if response.function_calls == None:
+            print(response.text)
+            break
+        else:
+            function_results = []
+            for item in response.function_calls:
+                function_call_result = call_function(item, verbose=False)
+                if len(function_call_result.parts) == 0:
+                    raise Exception("no parts in function call result")
+                if function_call_result.parts[0].function_response == None:
+                    raise Exception("function_response is missing")
+                if function_call_result.parts[0].function_response.response == None:
+                    raise Exception("function_response.response is missing")
+                function_results.append(function_call_result.parts[0])
+                if args.verbose == True:
+                    print(f"-> {function_call_result.parts[0].function_response.response}")
+            messages.append(types.Content(role="user", parts=function_results))
     else:
-        function_results = []
-        for item in response.function_calls:
-            function_call_result = call_function(item, verbose=False)
-            if len(function_call_result.parts) == 0:
-                raise Exception("no parts in function call result")
-            if function_call_result.parts[0].function_response == None:
-                raise Exception("function_response is missing")
-            if function_call_result.parts[0].function_response.response == None:
-                raise Exception("function_response.response is missing")
-            function_results.append(function_call_result.parts[0])
-            if args.verbose == True:
-                print(f"-> {function_call_result.parts[0].function_response.response}")
+        print("Maximum iterations reached")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
